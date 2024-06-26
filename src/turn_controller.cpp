@@ -44,14 +44,13 @@ class TurnController : public rclcpp::Node {
 public:
   TurnController(int scene_number)
       : Node("turn_controller"), scene_number_(scene_number),
-        Kp_(1.2), Ki_(0.1), Kd_(0.3), max_angular_speed_(1.0), stop_tolerance_(0.01) {
+        Kp_(1.2), Ki_(0.1), Kd_(0.3), max_angular_speed_(1.0), stop_tolerance_(0.01),
+        initial_pose_received_(false) {
     velocity_publisher_ = this->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
     odometry_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/rosbot_xl_base_controller/odom", 10, std::bind(&TurnController::odometry_callback, this, std::placeholders::_1));
     timer_ = this->create_wall_timer(100ms, std::bind(&TurnController::control_loop, this));
     set_waypoints();
-    update_target_angle();
-    pid_ = std::make_shared<PIDController>(Kp_, Ki_, Kd_, target_angle_);
   }
 
 private:
@@ -62,7 +61,7 @@ private:
       break;
 
     case 2: // CyberWorld
-      waypoints_ = {{1.172, 0.216}, {1.08, -0.588}};
+      waypoints_ = {{0.010451, -0.0156}, {-0.4048, -0.30537}};
       break;
 
     default:
@@ -81,17 +80,40 @@ private:
     tf2::Matrix3x3 m(q);
     double roll, pitch;
     m.getRPY(roll, pitch, current_yaw_);
+
+    if (!initial_pose_received_) {
+      initial_x_ = msg->pose.pose.position.x;
+      initial_y_ = msg->pose.pose.position.y;
+      initial_yaw_ = current_yaw_;
+      initial_pose_received_ = true;
+      update_target_angle();
+      pid_ = std::make_shared<PIDController>(Kp_, Ki_, Kd_, target_angle_);
+      RCLCPP_INFO(this->get_logger(), "Initial pose received. Initial x: %.3f, y: %.3f, yaw: %.3f", initial_x_, initial_y_, initial_yaw_);
+    }
+
     RCLCPP_DEBUG(this->get_logger(), "Current yaw: %.3f", current_yaw_);
   }
 
   void update_target_angle() {
-    double dx = waypoints_[current_waypoint_index_].first;
-    double dy = waypoints_[current_waypoint_index_].second;
+    double dx = waypoints_[current_waypoint_index_].first - initial_x_;
+    double dy = waypoints_[current_waypoint_index_].second - initial_y_;
     target_angle_ = std::atan2(dy, dx);
+
+    // Adjust target angle to be within -pi to pi
+    target_angle_ = std::fmod(target_angle_ + 2 * M_PI, 2 * M_PI);
+    if (target_angle_ > M_PI) {
+      target_angle_ -= 2 * M_PI;
+    }
+
     RCLCPP_INFO(this->get_logger(), "New target angle: %.3f radians", target_angle_);
   }
 
   void control_loop() {
+    if (!initial_pose_received_) {
+      RCLCPP_WARN(this->get_logger(), "Waiting for initial pose...");
+      return;
+    }
+
     if (current_waypoint_index_ >= waypoints_.size()) {
       RCLCPP_INFO(this->get_logger(), "All waypoints reached. Process finished.");
       rclcpp::shutdown();
@@ -138,6 +160,8 @@ private:
   double stop_tolerance_;
   int scene_number_;
   std::shared_ptr<PIDController> pid_;
+  bool initial_pose_received_;
+  double initial_x_, initial_y_, initial_yaw_;
 };
 
 int main(int argc, char *argv[]) {
@@ -157,3 +181,16 @@ int main(int argc, char *argv[]) {
 
   rclcpp::shutdown();
 }
+// 1
+// x: 0.0007837721518988449
+// y: 2.172208123277049e-05
+// z: 0.0
+// 2
+// x: -0.0007490707127430095
+// y: 0.000252678404422617
+// z: 0.0
+// ---
+// x: -0.003036551066448648
+// y: -0.0017523676378454376
+// z: 0.0
+// ---
