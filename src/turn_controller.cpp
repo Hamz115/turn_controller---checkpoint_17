@@ -110,7 +110,11 @@ private:
     if (std::abs(target_angle_ - current_yaw_) < stop_tolerance_) {
       cmd.angular.z = 0.0;
       velocity_publisher_->publish(cmd);
-      RCLCPP_INFO(this->get_logger(), "Reached waypoint %zu at (%.3f, %.3f). Acquiring next waypoint.", current_waypoint_index_ + 1, waypoints_[current_waypoint_index_].first, waypoints_[current_waypoint_index_].second);
+      RCLCPP_INFO(this->get_logger(), "Reached waypoint %zu at (%.3f, %.3f). Stopping for stabilization.", current_waypoint_index_ + 1, waypoints_[current_waypoint_index_].first, waypoints_[current_waypoint_index_].second);
+
+      // Pause for a period to ensure the robot comes to a complete stop
+      std::this_thread::sleep_for(std::chrono::seconds(3)); // Pause for 3 seconds
+
       current_waypoint_index_++;
       if (current_waypoint_index_ < waypoints_.size()) {
         update_target_angle();
